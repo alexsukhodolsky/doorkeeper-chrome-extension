@@ -35,5 +35,7 @@ Click "Load unpacked extension"
 That's it! You should now see the OAuth 2.0 logo in the top right portion of your screen.
 Click it and try it out!
 
+## Other Information
+
 A special thanks to the developers at applicake for their [awesome doorkeeper provider RoR gem](https://github.com/applicake/doorkeeper)
 and [Boris Smus](https://github.com/borismus) for his awesome OAuth 2.0 Chrome extension library [oauth2-extensions](https://github.com/borismus/oauth2-extensions)!
