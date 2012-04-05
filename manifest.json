@@ -1,0 +1,23 @@
+{
+  "name": "Doorkeeper OAuth 2.0",
+  "version": "1.0",
+  "description": "Calls some Doorkeeper Provider API Methods",
+  "icons": {
+    "128": "icon128.png"
+  },
+  "browser_action": {
+    "default_title": "OAuth 2.0",
+    "default_icon": "icon128.png",
+    "popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://doorkeeper-provider.herokuapp.com/robots.txt*"],
+      "js": ["oauth2/oauth2_inject.js"],
+        "run_at": "document_start"
+    }
+  ],
+  "permissions": [
+    "http://doorkeeper-provider.herokuapp.com/api/v1/*"
+  ]
+}

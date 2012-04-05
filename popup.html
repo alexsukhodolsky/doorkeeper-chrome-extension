@@ -1,0 +1,45 @@
+<!doctype html>
+
+<!--
+Copyright 2011 Google Inc. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+
+<head>
+  <title>OAuth 2.0 Popup</title>
+  <script src="oauth2/oauth2.js"></script>
+	<script src="jquery-1.7.1.min.js"></script>
+  <script src="popup.js"></script>
+  <link type="text/css" rel="stylesheet" media="screen" href="http://twitter.github.com/bootstrap/1.4.0/bootstrap.min.css">
+  <link type="text/css" rel="stylesheet" media="screen" href="/application.css">
+</head>
+
+<body>
+      <h2>Explore the API</h2>
+
+      <div class="well">
+        <input type="submit" id="me" class="btn" value="My Credentials"></input>
+        <input type="submit" id="profiles" class="btn" value="Profiles"></input>
+      </div>
+
+      <div>
+        <div>
+          <h3>Token</h3>
+          <p id="display-token" />
+        </div>
+        <div>
+          <h3>Response</h3>
+          <p id="message" />
+        </div>
+</body>

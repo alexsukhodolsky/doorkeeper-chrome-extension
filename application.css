@@ -1,0 +1,26 @@
+body {
+  padding-top: 10px;
+  width: 500px;
+  height: 500px;
+  margin: 10px;
+}
+
+section > .row {
+  margin-bottom: 10px;
+}
+
+.row h2 {
+  margin-bottom: 10px;
+}
+
+.row h3 {
+  margin-bottom: 7px;
+}
+
+pre > code {
+  background-color: transparent;
+}
+
+.well {
+	width: 300px;
+}
