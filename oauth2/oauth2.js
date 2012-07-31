@@ -22,18 +22,21 @@
  * @param {Object} config Containing clientId, clientSecret and apiScope
  * @param {String} config Alternatively, OAuth2.FINISH for the finish flow
  */
-var OAuth2 = function(adapterName, config, callback) {
+var OAuth2 = function(adapterName, config) {
   this.adapterName = adapterName;
   var that = this;
   OAuth2.loadAdapter(adapterName, function() {
     that.adapter = OAuth2.adapters[adapterName];
     if (config == OAuth2.FINISH) {
       that.finishAuth();
-      return;
     } else if (config) {
-      that.set('clientId', config.client_id);
-      that.set('clientSecret', config.client_secret);
-      that.set('apiScope', config.api_scope);
+      that.updateLocalStorage();
+
+      var data = that.get();
+      data.clientId = config.client_id;
+      data.clientSecret = config.client_secret;
+      data.apiScope = config.api_scope;
+      that.setSource(data);
     }
   });
 };
@@ -47,8 +50,42 @@ OAuth2.FINISH = 'finish';
  * OAuth 2.0 endpoint adapters known to the library
  */
 OAuth2.adapters = {};
-OAuth2.adapterReverse = localStorage.adapterReverse &&
-    JSON.parse(localStorage.adapterReverse) || {};
+OAuth2.adapterReverse = localStorage.oauth2_adapterReverse &&
+    JSON.parse(localStorage.oauth2_adapterReverse) || {};
+// Update the persisted adapterReverse in localStorage.
+if (localStorage.adapterReverse) {
+  OAuth2.adapterReverse = JSON.parse(localStorage.adapterReverse);
+  delete localStorage.adapterReverse;
+}
+
+/**
+ * Consolidates the data stored in localStorage on the current adapter in to
+ * a single JSON object.
+ * The update should only ever happen once per adapter and will delete the old
+ * obsolete entries in localStorage after copying their values.
+ */
+OAuth2.prototype.updateLocalStorage = function() {
+  // Check if update is even required.
+  if (this.getSource()) {
+    return;
+  }
+  var data = {};
+  var variables = [
+    'accessToken', 'accessTokenDate', 'apiScope', 'clientId', 'clientSecret',
+    'expiresIn', 'refreshToken'
+  ];
+  // Check if a variable has already been persisted and then copy them.
+  var key;
+  for (var i = 0; i < variables.length; i++) {
+    key = this.adapterName + '_' + variables[i];
+    if (localStorage.hasOwnProperty(key)) {
+      data[variables[i]] = localStorage[key];
+      delete localStorage[key];
+    }
+  }
+  // Persist the new JSON object in localStorage.
+  this.setSource(data);
+};
 
 /**
  * Opens up an authorization popup window. This starts the OAuth 2.0 flow.
@@ -89,10 +126,9 @@ OAuth2.prototype.getAccessAndRefreshTokens = function(authorizationCode, callbac
   var xhr = new XMLHttpRequest();
   xhr.addEventListener('readystatechange', function(event) {
     if (xhr.readyState == 4) {
-      if(xhr.status == 200) {
-        var obj = that.adapter.parseAccessToken(xhr.responseText);
-        // Callback with the tokens
-        callback(obj.accessToken, obj.refreshToken, obj.expiresIn);
+      if (xhr.status == 200) {
+        // Callback with the data (incl. tokens).
+        callback(that.adapter.parseAccessToken(xhr.responseText));
       }
     }
   });
@@ -136,16 +172,17 @@ OAuth2.prototype.refreshAccessToken = function(refreshToken, callback) {
       if(xhr.status == 200) {
         console.log(xhr.responseText);
         // Parse response with JSON
-        obj = JSON.parse(xhr.responseText);
+        var obj = JSON.parse(xhr.responseText);
         // Callback with the tokens
         callback(obj.access_token, obj.expires_in);
       }
     }
   };
 
+  var data = this.get();
   var formData = new FormData();
-  formData.append('client_id', this.get('clientId'));
-  formData.append('client_secret', this.get('clientSecret'));
+  formData.append('client_id', data.clientId);
+  formData.append('client_secret', data.clientSecret);
   formData.append('refresh_token', refreshToken);
   formData.append('grant_type', 'refresh_token');
   xhr.open('POST', this.adapter.accessTokenURL(), true);
@@ -157,34 +194,49 @@ OAuth2.prototype.refreshAccessToken = function(refreshToken, callback) {
  * leg of the OAuth 2.0 process.
 */
 OAuth2.prototype.finishAuth = function() {
+  var authorizationCode = null;
   var that = this;
-  var authorizationCode = that.adapter.parseAuthorizationCode(window.location.href);
-  console.log(authorizationCode);
-  that.getAccessAndRefreshTokens(authorizationCode, function(at, rt, exp) {
-    that.set('accessToken', at);
-    that.set('expiresIn', exp);
-    // Most OAuth 2.0 providers don't have a refresh token
-    if (rt) {
-      that.set('refreshToken', rt);
-    }
-    that.set('accessTokenDate', (new Date()).valueOf());
 
-    // Loop through existing extension views and excute any stored callbacks.
+  // Loop through existing extension views and excute any stored callbacks.
+  function callback(error) {
     var views = chrome.extension.getViews();
     for (var i = 0, view; view = views[i]; i++) {
       if (view['oauth-callback']) {
-        view['oauth-callback']();
+        view['oauth-callback'](error);
         // TODO: Decide whether it's worth it to scope the callback or not.
-        // Currently, every provider will share the same callback address, but
+        // Currently, every provider will share the same callback address but
         // that's not such a big deal assuming that they check to see whether
         // the token exists instead of blindly trusting that it does.
       }
-    };
+    }
 
     // Once we get here, close the current tab and we're good to go.
     // The following works around bug: crbug.com/84201
     window.open('', '_self', '');
     window.close();
+  }
+
+  try {
+    authorizationCode = that.adapter.parseAuthorizationCode(window.location.href);
+    console.log(authorizationCode);
+  } catch (e) {
+    console.error(e);
+    callback(e);
+  }
+
+  that.getAccessAndRefreshTokens(authorizationCode, function(response) {
+    var data = that.get();
+    data.accessTokenDate = new Date().valueOf();
+
+    // Set all data returned by the OAuth 2.0 provider.
+    for (var name in response) {
+      if (response.hasOwnProperty(name) && response[name]) {
+        data[name] = response[name];
+      }
+    }
+
+    that.setSource(data);
+    callback();
   });
 };
 
@@ -192,52 +244,87 @@ OAuth2.prototype.finishAuth = function() {
  * @return True iff the current access token has expired
  */
 OAuth2.prototype.isAccessTokenExpired = function() {
-  return (new Date().valueOf() - this.get('accessTokenDate')) >
-      this.get('expiresIn') * 1000;
+  var data = this.get();
+  return (new Date().valueOf() - data.accessTokenDate) > data.expiresIn * 1000;
 };
 
 /**
- * Wrapper around the localStorage object that gets variables prefixed
- * by the adapter name
+ * Get the persisted adapter data in localStorage. Optionally, provide a
+ * property name to only retrieve its value.
  *
- * @param {String} key The key to use for lookup
- * @return {String} The value
+ * @param {String} [name] The name of the property to be retrieved.
+ * @return The data object or property value if name was specified.
  */
-OAuth2.prototype.get = function(key) {
-  return localStorage[this.adapterName + '_' + key];
+OAuth2.prototype.get = function(name) {
+  var src = this.getSource();
+  var obj = src ? JSON.parse(src) : {};
+  return name ? obj[name] : obj;
 };
 
 /**
- * Wrapper around the localStorage object that sets variables prefixed
- * by the adapter name
+ * Set the value of a named property on the persisted adapter data in
+ * localStorage.
  *
- * @param {String} key The key to store with
- * @param {String} value The value to store
+ * @param {String} name The name of the property to change.
+ * @param value The value to be set.
  */
-OAuth2.prototype.set = function(key, value) {
-  localStorage[this.adapterName + '_' + key] = value;
+OAuth2.prototype.set = function(name, value) {
+  var obj = this.get();
+  obj[name] = value;
+  this.setSource(obj);
 };
 
 /**
- * Wrapper around the localStorage object that clears values prefixed by the
- * adapter name
+ * Clear all persisted adapter data in localStorage. Optionally, provide a
+ * property name to only clear its value.
  *
- * @param {String} key The key to clear from localStorage
+ * @param {String} [name] The name of the property to clear.
  */
-OAuth2.prototype.clear = function(key) {
-  delete localStorage[this.adapterName + '_' + key];
+OAuth2.prototype.clear = function(name) {
+  if (name) {
+    var obj = this.get();
+    delete obj[name];
+    this.setSource(obj);
+  } else {
+    delete localStorage['oauth2_' + this.adapterName];
+  }
 };
 
 /**
- * The configuration parameters that are passed to the adapter
+ * Get the JSON string for the object stored in localStorage.
  *
- * @returns {Object} Containing clientId, clientSecret and apiScope
+ * @return {String} The source JSON string.
+ */
+OAuth2.prototype.getSource = function() {
+  return localStorage['oauth2_' + this.adapterName];
+};
+
+/**
+ * Set the JSON string for the object stored in localStorage.
+ *
+ * @param {Object|String} source The new JSON string/object to be set.
+ */
+OAuth2.prototype.setSource = function(source) {
+  if (!source) {
+    return;
+  }
+  if (typeof source !== 'string') {
+    source = JSON.stringify(source);
+  }
+  localStorage['oauth2_' + this.adapterName] = source;
+};
+
+/**
+ * Get the configuration parameters to be passed to the adapter.
+ *
+ * @returns {Object} Contains clientId, clientSecret and apiScope.
  */
 OAuth2.prototype.getConfig = function() {
+  var data = this.get();
   return {
-    clientId: this.get('clientId'),
-    clientSecret: this.get('clientSecret'),
-    apiScope: this.get('apiScope')
+    clientId: data.clientId,
+    clientSecret: data.clientSecret,
+    apiScope: data.apiScope
   };
 };
 
@@ -278,8 +365,8 @@ OAuth2.loadAdapter = function(adapterName, callback) {
  * @throws {String} If the specified adapter is invalid
  */
 OAuth2.adapter = function(name, impl) {
-  var implementing = 'authorizationCodeURL redirectURL \
-    accessTokenURL accessTokenMethod accessTokenParams accessToken';
+  var implementing = 'authorizationCodeURL redirectURL accessTokenURL ' +
+    'accessTokenMethod accessTokenParams accessToken';
 
   // Check for missing methods
   implementing.split(' ').forEach(function(method, index) {
@@ -293,7 +380,7 @@ OAuth2.adapter = function(name, impl) {
   // Make an entry in the adapter lookup table
   OAuth2.adapterReverse[impl.redirectURL()] = name;
   // Store the the adapter lookup table in localStorage
-  localStorage.adapterReverse = JSON.stringify(OAuth2.adapterReverse);
+  localStorage.oauth2_adapterReverse = JSON.stringify(OAuth2.adapterReverse);
 };
 
 /**
@@ -304,7 +391,7 @@ OAuth2.adapter = function(name, impl) {
  * @return The adapter for the current page
  */
 OAuth2.lookupAdapterName = function(url) {
-  var adapterReverse = JSON.parse(localStorage.adapterReverse);
+  var adapterReverse = JSON.parse(localStorage.oauth2_adapterReverse);
   return adapterReverse[url];
 };
 
@@ -324,16 +411,19 @@ OAuth2.prototype.authorize = function(callback) {
   var that = this;
   OAuth2.loadAdapter(that.adapterName, function() {
     that.adapter = OAuth2.adapters[that.adapterName];
-    if (!that.get('accessToken')) {
+    var data = that.get();
+    if (!data.accessToken) {
       // There's no access token yet. Start the authorizationCode flow
       that.openAuthorizationCodePopup(callback);
     } else if (that.isAccessTokenExpired()) {
       // There's an existing access token but it's expired
-      if (that.get('refreshToken')) {
-        that.refreshAccessToken(that.get('refreshToken'), function(at, exp) {
-          that.set('accessToken', at);
-          that.set('expiresIn', exp);
-          that.set('accessTokenDate', (new Date()).valueOf());
+      if (data.refreshToken) {
+        that.refreshAccessToken(data.refreshToken, function(at, exp) {
+          var newData = that.get();
+          newData.accessTokenDate = new Date().valueOf();
+          newData.accessToken = at;
+          newData.expiresIn = exp;
+          that.setSource(newData);
           // Callback when we finish refreshing
           if (callback) {
             callback();
@@ -350,13 +440,22 @@ OAuth2.prototype.authorize = function(callback) {
       }
     }
   });
-}
+};
 
 /**
  * @returns A valid access token.
  */
 OAuth2.prototype.getAccessToken = function() {
   return this.get('accessToken');
+};
+
+/**
+ * Indicate whether or not a valid access token exists.
+ *
+ * @returns {Boolean} True if an access token exists; otherwise false.
+ */
+OAuth2.prototype.hasAccessToken = function() {
+  return !!this.get('accessToken');
 };
 
 /**
